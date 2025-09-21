@@ -14,14 +14,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 CORS(app)
 
-@app.get("/")
-def health_root():
-    return {"status": "ok", "service": "safeguardglobal-blog-scraper"}
 
-
-# ------------------------------
-# Helper: სურათების ამოღება
-# ------------------------------
 def extract_images(container):
     image_urls = set()
 
@@ -63,14 +56,11 @@ def extract_images(container):
     return list(image_urls)
 
 
-# ------------------------------
-# Helper: HTML გაწმენდა
-# ------------------------------
-def clean_article(article):
-    for tag in article(["script", "style", "svg", "noscript"]):
+def clean_html(container):
+    for tag in container(["script", "style", "svg", "noscript"]):
         tag.decompose()
 
-    for tag in article.find_all(True):
+    for tag in container.find_all(True):
         if tag.name not in [
             "p", "h1", "h2", "h3", "ul", "ol", "li", "img",
             "strong", "em", "b", "i", "a"
@@ -79,13 +69,7 @@ def clean_article(article):
             continue
 
         if tag.name == "img":
-            src = (
-                tag.get("src")
-                or tag.get("data-src")
-                or tag.get("data-lazy-src")
-                or tag.get("data-original")
-                or tag.get("data-background")
-            )
+            src = tag.get("src")
             if not src and tag.get("srcset"):
                 src = tag["srcset"].split(",")[0].split()[0]
             if src and src.startswith("//"):
@@ -104,35 +88,14 @@ def clean_article(article):
         else:
             tag.attrs = {}
 
-    return article
+    return container
 
 
-# ------------------------------
-# Blog content extraction
-# ------------------------------
-def extract_blog_content(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-
-    article = soup.find(
-        "div",
-        class_=lambda c: c and "lg:w-2/3" in c and "flex" in c and "gap-10" in c,
-    )
-    if not article:
-        article = soup.find("article")
-    if not article:
-        return None, soup
-
-    return clean_article(article), soup
-
-
-# ------------------------------
-# API
-# ------------------------------
 @app.post("/scrape-blog")
 def scrape_blog():
     try:
-        data = request.get_json(force=True, silent=False)
-        url = data.get("url") if isinstance(data, dict) else None
+        data = request.get_json(force=True)
+        url = data.get("url")
         if not url:
             return Response("Missing 'url' field", status=400)
 
@@ -142,37 +105,44 @@ def scrape_blog():
 
         resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        article, soup = extract_blog_content(resp.text)
+        # ✅ ამოიღე სათაური მხოლოდ h1.text-brand-purple-black-დან
+        h1_tag = soup.find("h1", class_="text-brand-purple-black")
+        title = h1_tag.get_text(strip=True) if h1_tag else ""
+
+        # ✅ ამოიღე სტატიის ნაწილი
+        article = soup.find(
+            "div",
+            class_=lambda c: c and "lg:w-2/3" in c and "flex" in c and "gap-10" in c,
+        )
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # ✅ აიღე სათაური მხოლოდ h1.text-brand-purple-black-დან
-        h1 = soup.find("h1", class_="text-brand-purple-black")
-        title = h1.get_text(strip=True) if h1 else ""
+        clean_article = clean_html(article)
 
-        # Images
-        images = extract_images(article)
+        # ✅ ამოიღე სურათები
+        images = extract_images(clean_article)
         image_names = [f"image{i+1}.png" for i in range(len(images))]
+
+        # ✅ content_html = სათაური + სტატია + სურათები
+        combined_html = f"<h1>{title}</h1>" + str(clean_article).strip()
+        if images:
+            combined_html += "<div class='scraper-images'>" + "".join(
+                [f"<img src='{src}' alt='Image'>" for src in images]
+            ) + "</div>"
 
         result = {
             "title": title,
-            "content_html": str(article).strip(),
+            "content_html": combined_html,
             "images": images,
             "image_names": image_names,
         }
 
-        return Response(
-            json.dumps(result, ensure_ascii=False),
-            mimetype="application/json"
-        )
+        return Response(json.dumps(result, ensure_ascii=False), mimetype="application/json")
     except Exception as e:
         logging.exception("Error scraping blog")
-        return Response(
-            json.dumps({"error": str(e)}),
-            status=500,
-            mimetype="application/json"
-        )
+        return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
 
 
 if __name__ == "__main__":
