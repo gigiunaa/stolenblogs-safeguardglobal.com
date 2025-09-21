@@ -1,4 +1,3 @@
-
 # blog_scraper_clean.py
 # -*- coding: utf-8 -*-
 import os
@@ -19,13 +18,13 @@ CORS(app)
 def health_root():
     return {"status": "ok", "service": "safeguardglobal-blog-scraper"}
 
+
 # ------------------------------
 # Helper: სურათების ამოღება
 # ------------------------------
 def extract_images(container):
     image_urls = set()
 
-    # <img> + lazy attributes + srcset
     for img in container.find_all("img"):
         src = (
             img.get("src")
@@ -43,7 +42,6 @@ def extract_images(container):
             if src.startswith(("http://", "https://")):
                 image_urls.add(src)
 
-    # <source srcset="...">
     for source in container.find_all("source"):
         srcset = source.get("srcset")
         if srcset:
@@ -53,7 +51,6 @@ def extract_images(container):
             if first.startswith(("http://", "https://")):
                 image_urls.add(first)
 
-    # style="background-image:url(...)"
     for tag in container.find_all(style=True):
         style = tag["style"]
         for match in re.findall(r"url\((.*?)\)", style):
@@ -70,26 +67,13 @@ def extract_images(container):
 # Helper: HTML გაწმენდა
 # ------------------------------
 def clean_article(article):
-    # წაშალე script/style/svg/noscript
     for tag in article(["script", "style", "svg", "noscript"]):
         tag.decompose()
 
-    # გაასუფთავე ატრიბუტები
     for tag in article.find_all(True):
         if tag.name not in [
-            "p",
-            "h1",
-            "h2",
-            "h3",
-            "ul",
-            "ol",
-            "li",
-            "img",
-            "strong",
-            "em",
-            "b",
-            "i",
-            "a",
+            "p", "h1", "h2", "h3", "ul", "ol", "li", "img",
+            "strong", "em", "b", "i", "a"
         ]:
             tag.unwrap()
             continue
@@ -124,23 +108,21 @@ def clean_article(article):
 
 
 # ------------------------------
-# Blog content extraction (Safeguard Global only)
+# Blog content extraction
 # ------------------------------
 def extract_blog_content(html: str):
     soup = BeautifulSoup(html, "html.parser")
 
-    # Safeguard Global-ის სტრუქტურა → ძირითადი div
     article = soup.find(
         "div",
         class_=lambda c: c and "lg:w-2/3" in c and "flex" in c and "gap-10" in c,
     )
     if not article:
-        # fallback: try <article> tag or common containers (rare on this site)
         article = soup.find("article")
     if not article:
-        return None
+        return None, soup
 
-    return clean_article(article)
+    return clean_article(article), soup
 
 
 # ------------------------------
@@ -154,34 +136,27 @@ def scrape_blog():
         if not url:
             return Response("Missing 'url' field", status=400)
 
-        # მხოლოდ safeguardglobal.com-ზე იმუშავოს
         parsed = urlparse(url)
         if "safeguardglobal.com" not in parsed.netloc:
             return Response("This scraper only works for safeguardglobal.com", status=403)
 
         resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # title
-        title = None
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
-        h1 = soup.find("h1")
-        if h1 and not title:
-            title = h1.get_text(strip=True)
-
-        # blog content
-        article = extract_blog_content(resp.text)
+        article, soup = extract_blog_content(resp.text)
         if not article:
             return Response("Could not extract blog content", status=422)
 
-        # images -> მხოლოდ სტატიის შიგნით
+        # ✅ აიღე სათაური მხოლოდ h1.text-brand-purple-black-დან
+        h1 = soup.find("h1", class_="text-brand-purple-black")
+        title = h1.get_text(strip=True) if h1 else ""
+
+        # Images
         images = extract_images(article)
         image_names = [f"image{i+1}.png" for i in range(len(images))]
 
         result = {
-            "title": title or "",
+            "title": title,
             "content_html": str(article).strip(),
             "images": images,
             "image_names": image_names,
@@ -200,9 +175,6 @@ def scrape_blog():
         )
 
 
-# ------------------------------
-# Run (local dev)
-# ------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
