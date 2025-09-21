@@ -107,11 +107,11 @@ def scrape_blog():
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # ✅ ამოიღე სათაური მხოლოდ h1.text-brand-purple-black-დან
+        # ✅ სათაური
         h1_tag = soup.find("h1", class_="text-brand-purple-black")
         title = h1_tag.get_text(strip=True) if h1_tag else ""
 
-        # ✅ ამოიღე სტატიის ნაწილი
+        # ✅ სტატია
         article = soup.find(
             "div",
             class_=lambda c: c and "lg:w-2/3" in c and "flex" in c and "gap-10" in c,
@@ -121,20 +121,16 @@ def scrape_blog():
 
         clean_article = clean_html(article)
 
-        # ✅ ამოიღე სურათები
+        # ✅ სურათები
         images = extract_images(clean_article)
         image_names = [f"image{i+1}.png" for i in range(len(images))]
 
-        # ✅ content_html = სათაური + სტატია + სურათები
-        combined_html = f"<h1>{title}</h1>" + str(clean_article).strip()
-        if images:
-            combined_html += "<div class='scraper-images'>" + "".join(
-                [f"<img src='{src}' alt='Image'>" for src in images]
-            ) + "</div>"
+        # ✅ content_html = <h1> + <article>
+        content_html = f"<h1>{title}</h1><article>{str(clean_article).strip()}</article>"
 
         result = {
             "title": title,
-            "content_html": combined_html,
+            "content_html": content_html,
             "images": images,
             "image_names": image_names,
         }
