@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: safeguardglobal-blog-scraper
+    env: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn blog_scraper_clean:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PORT
+        value: "10000"
